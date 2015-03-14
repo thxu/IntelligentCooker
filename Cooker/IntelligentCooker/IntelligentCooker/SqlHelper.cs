@@ -12,7 +12,6 @@ namespace IntelligentCooker
     {
         static string sqldatabase = @"Data Source=LocalHost;Initial Catalog=MyCook;Persist Security Info=True;User ID=sa;Password=sa";
         //static string sqldatabase = @"Server =.;Database = MyCook;Integrated Security=True";
-        //static string sqldatabase = @"Server =(localdb)\Projects;Database = MyCook;Integrated Security=True";
         /// <summary>
         /// 处理数据库更新，插入，删除操作,返回受影响行数
         /// </summary>

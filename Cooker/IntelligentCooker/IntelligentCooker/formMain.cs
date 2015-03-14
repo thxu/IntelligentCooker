@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Cooker.SystemUtils;
+using System.Net;
 
 namespace IntelligentCooker
 {
@@ -19,20 +20,25 @@ namespace IntelligentCooker
         {
             InitializeComponent();
             TextBox.CheckForIllegalCrossThreadCalls = false;
-
         }
-        private TcpListener MyListener;
-        private int port = 8080;
+        private Socket listenner;
+        private IPEndPoint locEP;
         private void InitListen()
         {
             try
             {
-                MyListener = new TcpListener(port);
-                MyListener.Start();
-                Thread th = new Thread(new ThreadStart(StartListen));
-                th.IsBackground = true;
-                th.Start();
-                txtShow.AppendText("监听开始" + "\r\n");
+                listenner = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                locEP = new IPEndPoint(IPAddress.Any, 8080);
+                listenner.Bind(locEP);
+                listenner.Listen(100);
+                txtShow.AppendText("开始监听\r\n");
+                Thread[] myth = new Thread[50];
+                for (int i = 0; i < 50; i++)
+                {
+                    myth[i] = new Thread(new ThreadStart(StartListen));
+                    myth[i].IsBackground = true;
+                    myth[i].Start();
+                }
             }
             catch (System.Exception ex)
             {
@@ -43,84 +49,56 @@ namespace IntelligentCooker
 
         private void StartListen()
         {
+            byte[] buffer = new byte[1024];
             while (true)
             {
                 try
                 {
-                    Socket sokConnection = MyListener.AcceptSocket();
-                    Thread myth = new Thread(HandleDatas);
-                    myth.IsBackground = true;//不让它后台执行
-                    myth.Start(sokConnection);
-                }
-                catch (System.Exception ex)
-                {
-                    ShowErr("", ex);
-                    Logger.LogException(ex);
-                }
-            }
-        }
-        /// <summary>
-        /// 处理数据线程开始处理数据
-        /// </summary>
-        /// <param name="sokconnection"></param>
-        public void HandleDatas(object sokconnection)
-        {
-            Socket sokConnection = (Socket)sokconnection;
-            try
-            {
-                if (sokConnection.Connected)
-                {
-                    SendMsg("@connect#", ref sokConnection);
+                    Socket sok = listenner.Accept();
+                    SendMsg("@connect#", ref sok);
                     Logger.LogMessage("有设备连接，返回@connect#", "");
-                    byte[] byteReceiveMsg = new byte[1024];
-                    int L = sokConnection.Receive(byteReceiveMsg, byteReceiveMsg.Length, 0);
+                    int L = sok.Receive(buffer, buffer.Length, 0);
                     if (L > 0)
                     {
-                        string strReceiveMsg = Encoding.ASCII.GetString(byteReceiveMsg);
-                        string strEffectiveData = GetEffectiveData(strReceiveMsg);
+                        string strRecMsg = Encoding.ASCII.GetString(buffer);
+                        string strEffectiveData = GetEffectiveData(strRecMsg);
                         if (strEffectiveData == "invalid")
                         {
                             Logger.LogMessage("接受到无效数据，sok关闭", "");
-                            sokConnection.Close();
+                            txtShow.AppendText("接受到无效数据，sok关闭\r\n");
+                            sok.Shutdown(SocketShutdown.Both);
+                            sok.Close();
                             return;
                         }
                         Logger.LogMessage("接收到有效数据，数据为：", strEffectiveData);
                         txtShow.AppendText("接收到的有效数据为:" + strEffectiveData + "\r\n");
-
-
                         string StrType = strEffectiveData.Substring(0, 1);
-                        switch(StrType)
+                        switch (StrType)
                         {
                             case "A":/*处理手机端*/
                                 {
-                                    Logger.LogMessage("开始调用处理手机端函数","");
-                                    HandleCellphoneData(strEffectiveData, ref sokConnection);
+                                    Logger.LogMessage("开始调用处理手机端函数", "");
+                                    HandleCellphoneData(strEffectiveData, ref sok);
                                     break;
                                 }
                             case "B":/*处理下位机端*/
                                 {
                                     Logger.LogMessage("开始调用处理下位机端函数", "");
-                                    string Tmptype = strEffectiveData.Substring(1,1);
-                                    
-                                    if(Tmptype=="Z")/*下位机查询数据*/
+                                    string Tmptype = strEffectiveData.Substring(1, 1);
+                                    string DeviceId = strEffectiveData.Substring(2, 15);
+                                    string FireFlg = strEffectiveData.Substring(17, 1);
+                                    if (Tmptype == "Z")/*下位机查询数据*/
                                     {
-                                        string DeviceId = strEffectiveData.Substring(2, 15);
-                                        string FireFlg = strEffectiveData.Substring(17, 1);
-                                        SendtoDevice(DeviceId, FireFlg, ref sokConnection);
+                                        SendtoDevice(DeviceId, FireFlg, ref sok);
                                     }
-                                    else if(Tmptype=="A"||Tmptype=="B"||Tmptype=="C")/*下位机返回数据接收情况*/
+                                    else if (Tmptype == "A" || Tmptype == "B" || Tmptype == "C")/*下位机返回数据接收情况*/
                                     {
-                                        string deviceid = strEffectiveData.Substring(7,15);
-                                        DeviceDataSetSendFlg(deviceid, ref sokConnection);
-                                    }
-                                    else if(Tmptype == "W")/*下位机正在工作*/
-                                    {
-                                        //string deviceid = strEffectiveData.Substring(7, 15);
-                                        DeviceDataSetWorkFlg(strEffectiveData, ref sokConnection);
+                                        string deviceid = strEffectiveData.Substring(7, 15);
+                                        DeviceDataSetSendFlg(deviceid, ref sok);
                                     }
                                     else
                                     {
-                                        //DeviceDataSetSendFlg(DeviceId, ref sokConnection);
+                                        DeviceDataSetSendFlg(DeviceId, ref sok);
                                     }
                                     break;
                                 }
@@ -130,26 +108,23 @@ namespace IntelligentCooker
                                     break;
                                 }
                         }
-                        sokConnection.Shutdown(SocketShutdown.Both);
-                        sokConnection.Close();
+                        sok.Shutdown(SocketShutdown.Both);
+                        sok.Close();
                     }
                     else
                     {
-                        Logger.LogMessage("未接收到数据，sok关闭", "");
-                        sokConnection.Shutdown(SocketShutdown.Both);
-                        sokConnection.Close();
+                        sok.Shutdown(SocketShutdown.Both);
+                        sok.Close();
                     }
                 }
-            }
-            catch (System.Exception ex)
-            {
-                ShowErr("", ex);
-                sokConnection.Shutdown(SocketShutdown.Both);
-                sokConnection.Close();
-                Logger.LogException(ex);
+                catch (System.Exception ex)
+                {
+                    ShowErr("", ex);
+                    Logger.LogException(ex);
+                }
             }
         }
-        public void HandleCellphoneData(string strEffectiveData,ref Socket sokConnection)
+        public void HandleCellphoneData(string strEffectiveData, ref Socket sokConnection)
         {
             string[] strdata = strEffectiveData.Split('+');
             switch (strdata[0])
@@ -181,10 +156,10 @@ namespace IntelligentCooker
                             Logger.LogMessage("开始调用设置米量，水量等的函数", "");
                             SetData(strdata[2], strdata[3], strdata[4], ref sokConnection);
                         }
-                        else if (strdata[1] == "N")/*心跳包，查看有无新数据  A+N+用户名+设备号*/
+                        else if (strdata[1] == "N")/*心跳包，查看有无新数据*/
                         {
                             Logger.LogMessage("开始调用处理用户心跳包的函数", "");
-                            NormalAction(strdata[2],strdata[3], ref sokConnection);
+                            NormalAction(strdata[2], ref sokConnection);
                         }
                         break;
                     }
@@ -192,7 +167,7 @@ namespace IntelligentCooker
                     break;
             }
         }
-        public void NormalAction(string name,string deviceid,ref Socket mysok)
+        public void NormalAction(string name, ref Socket mysok)
         {
             try
             {
@@ -233,25 +208,20 @@ namespace IntelligentCooker
                             break;
                         }
                     }
-                    string strWorkFlg = GetDeviceWorkFlg(deviceid);  /*取得下位机的煮饭状态*/
-                    if(strWorkFlg != "NO")
-                    {
-                        SendInfo = SendInfo + strWorkFlg;
-                    }
                     SendMsgToPhone(SendInfo, ref mysok);
-                    //string strSql2 = "update MyCookUser set SendFlg=0 where UserName=@name";/*将发送标志修改为已发送*/
-                    //SqlParameter para2 = new SqlParameter("@name", name);
-                    //Logger.LogMessage("用户心跳：", "信息发送成功，标记该用户已发送过信息");
-                    //SqlHelper.MyHandleUpdateSql(strSql2, para2);
+                    string strSql2 = "update MyCookUser set SendFlg=0 where UserName=@name";/*将发送标志修改为已发送*/
+                    SqlParameter para2 = new SqlParameter("@name", name);
+                    Logger.LogMessage("用户心跳：", "信息发送成功，标记该用户已发送过信息");
+                    SqlHelper.MyHandleUpdateSql(strSql2, para2);
                 }
                 else
                 {
                     SendMsg("B", ref mysok);
                     Logger.LogMessage("用户心跳：", "没有该用户，返回B");
                 }
-                
+
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 ShowErr("", ex);
                 SendMsg("B", ref mysok);
@@ -259,33 +229,7 @@ namespace IntelligentCooker
                 Logger.LogException(ex);
             }
         }
-        public string GetDeviceWorkFlg(string deviceid)
-        {
-            try
-            {
-                string strSql = "select WorkFlg from MyCookDevice where DeviceID=@deviceid";      /*查找该设备的煮饭状态*/
-                SqlParameter para = new SqlParameter("@deviceid", deviceid);
-                DataTable dt = SqlHelper.MyHandleSelectSql(strSql, para);
-                if (dt.Rows.Count > 0)
-                {
-                    foreach (DataRow dr in dt.Rows)
-                    {
-                        return dr["WorkFlg"].ToString().Trim();
-                    }
-                    return "NO";
-                }
-                else
-                {
-                    return "NO";
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowErr("", ex);
-                return "NO";
-            }
-        }
-        public void DeviceDataSetSendFlg(string deviceid,ref Socket mysok)
+        public void DeviceDataSetSendFlg(string deviceid, ref Socket mysok)
         {
             try
             {
@@ -295,30 +239,7 @@ namespace IntelligentCooker
             }
             catch (Exception ex)
             {
-                Logger.LogMessage("下位机返回设置成功","SQL语句执行报错，发送标记重置为0失败");
-                Logger.LogException(ex);
-            }
-        }
-        public void DeviceDataSetWorkFlg(string strEffectiveData, ref Socket mysok)
-        {
-            try              /*接收到的信息为@BW0+Z014101000000001#之类 0代表煮饭结束  1代表煮第一顿饭*/
-            {
-                string[] strdata = strEffectiveData.Split('+');
-                string strCookFlg = strdata[0].Substring(2, 1);
-                string strDeviceid = strdata[1].Substring(1);
-                string strSql = "update MyCookDevice set WorkFlg=@strCookFlg where DeviceID=@deviceid";
-                SqlParameter[] paras ={
-                                         new SqlParameter("@strCookFLg",strCookFlg),
-                                         new SqlParameter("@deviceid",strDeviceid)
-                                     };
-                Logger.LogMessage("处理下位机煮饭状态", "sql语句初始化完毕");
-                SqlHelper.MyHandleUpdateSql(strSql, paras);
-                SendMsg("@BW_OK#", ref mysok);
-                Logger.LogMessage("处理下位机煮饭状态", "状态保存成功  返回BW_OK");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogMessage("处理下位机煮饭状态", "SQL语句执行报错，发送标记重置为0失败");
+                Logger.LogMessage("下位机返回设置成功", "SQL语句执行报错，发送标记重置为0失败");
                 Logger.LogException(ex);
             }
         }
@@ -343,7 +264,7 @@ namespace IntelligentCooker
                     Logger.LogMessage("下位机信息处理：", "数据库中 有 该设备");
                     foreach (DataRow dr in dt.Rows)
                     {
-                        if (Convert.ToInt32(dr["SendFlg"])==0)/*该数据还未发送给下位机*/
+                        if (Convert.ToInt32(dr["SendFlg"]) == 0)/*该数据还未发送给下位机*/
                         {
                             if (Convert.ToInt32(dr["TmpdataFlg"]) == 1)/*临时数据标志位为真  发送临时数据*/
                             {
@@ -353,11 +274,11 @@ namespace IntelligentCooker
                             {
                                 strSendInfo = "@BC" + strTime + dr["RepateData"].ToString() + "#";
                             }
-                           
+
                         }
                         else
                         {
-                            strSendInfo = "@BB"+strTime+"#";
+                            strSendInfo = "@BB" + strTime + "#";
                         }
                         SendMsg(strSendInfo, ref mysok);
                         Logger.LogMessage("下位机信息处理；", "返回用户设置的数据");
@@ -406,7 +327,7 @@ namespace IntelligentCooker
                     strSql2 = "update MyCookDevice set FireFlg=0 where DeviceID=@deviceid";
                     Logger.LogMessage("下位机信息处理：", "下位机 没有 煤气泄漏");
                 }
-                SqlParameter paras2 = new SqlParameter("@deviceid",deviceid);
+                SqlParameter paras2 = new SqlParameter("@deviceid", deviceid);
                 SqlHelper.MyHandleUpdateSql(strSql2, paras2);
 
             }
@@ -457,20 +378,6 @@ namespace IntelligentCooker
         {
             try
             {
-                string strSqlworkFlg = "select WorkFlg from MyCookDevice where DeviceID=@deviceid";
-                SqlParameter paraWorkFlg = new SqlParameter("@deviceid", deviceid);
-                DataTable dt1 = SqlHelper.MyHandleSelectSql(strSqlworkFlg, paraWorkFlg);
-                if (dt1.Rows.Count > 0)
-                {
-                    foreach (DataRow dr1 in dt1.Rows)
-                    {
-                        if (dr1["WorkFlg"].ToString().Trim() == "1")
-                        {
-                            SendMsg("D", ref mysok);
-                            return;
-                        }
-                    }
-                }
                 string strSql = "";
                 if (datatype == "A")   /*A:用户临时设置   B：用户重复设置*/
                 {
@@ -577,7 +484,7 @@ namespace IntelligentCooker
         {
             try
             {
-                string strSql = "select DevicePwd,IsDel from MyCookDevice where DeviceID=@deviceid";
+                string strSql = "select DevicePwd from MyCookDevice where DeviceID=@deviceid";
                 SqlParameter para = new SqlParameter("@deviceid", deveiceid);
                 Logger.LogMessage("绑定设备函数：", "SQL语句，参数初始化完毕");
                 DataTable dt = SqlHelper.MyHandleSelectSql(strSql, para);
@@ -585,12 +492,6 @@ namespace IntelligentCooker
                 {
                     foreach (DataRow dr in dt.Rows)
                     {
-                        if(dr["IsDel"].ToString().Trim() == "1")
-                        {
-                            SendMsg("B", ref mysok);
-                            Logger.LogMessage("绑定设备函数：", "设备已删除，返回绑定失败");
-                            break;
-                        }
                         if (dr["DevicePwd"].ToString().Trim() == devicepwd)  /*判定用户输入的设备密码是否正确*/
                         {
                             Logger.LogMessage("绑定设备函数：", "设备密码正确，开始将该设备的用户名设置为该用户");
@@ -740,7 +641,6 @@ namespace IntelligentCooker
         {
             try
             {
-
                 int iStartPos = 0, iEndPos = 0;
                 iStartPos = receivedata.IndexOf("@", 0);
                 iEndPos = receivedata.IndexOf("#", iStartPos);
@@ -748,7 +648,18 @@ namespace IntelligentCooker
                 {
                     return "invalid";
                 }
-                return receivedata.Substring(iStartPos + 1, (iEndPos - iStartPos) - 1);
+                else
+                {
+                    string tmpdata = receivedata.Substring(iStartPos + 1, (iEndPos - iStartPos) - 1);
+                    if (tmpdata.Length == 0)
+                    {
+                        return "invalid";
+                    }
+                    else
+                    {
+                        return tmpdata;
+                    }
+                }
             }
             catch (System.Exception ex)
             {
@@ -756,7 +667,7 @@ namespace IntelligentCooker
                 return "invalid";
             }
         }
-        public void SendMsgToPhone(string sData,ref Socket mySocket)
+        public void SendMsgToPhone(string sData, ref Socket mySocket)
         {
             SendMsg(Encoding.UTF8.GetBytes(sData), ref mySocket);
         }
@@ -778,13 +689,13 @@ namespace IntelligentCooker
                     else
                     {
                         txtShow.AppendText("信息发送成功:" + Encoding.UTF8.GetString(bSendData) + "\r\n");
-                        Logger.LogMessage("信息发送成功","");
+                        Logger.LogMessage("信息发送成功", "");
                     }
                 }
                 else
                 {
                     txtShow.AppendText("连接失败....\r\n");
-                    Logger.LogMessage("连接断开，发送失败","");
+                    Logger.LogMessage("连接断开，发送失败", "");
                 }
             }
             catch (Exception ex)
@@ -1071,7 +982,7 @@ namespace IntelligentCooker
                     txtBox_User.Text = strUser;
                     txtBox_DeviceID.Text = strDeviceID;
                     txtBox_DevicePwd.Text = strDevicePwd;
-                    if(strIsDel=="0")
+                    if (strIsDel == "0")
                     {
                         txtBox_IsDel.Text = "否";
                     }
@@ -1079,7 +990,7 @@ namespace IntelligentCooker
                     {
                         txtBox_IsDel.Text = "是";
                     }
-                    if (strFireFlg=="0")
+                    if (strFireFlg == "0")
                     {
                         txtBox_FireFlg.Text = "否";
                     }
@@ -1105,11 +1016,11 @@ namespace IntelligentCooker
                 string strDevicePwd = txtBox_DevicePwd.Text.Trim();
                 string strIsDel = txtBox_IsDel.Text.Trim();
                 string strFireFlg = txtBox_FireFlg.Text.Trim();
-                if(strIsDel=="是")
+                if (strIsDel == "是")
                 {
                     strIsDel = "1";
                 }
-                else if(strIsDel=="否")
+                else if (strIsDel == "否")
                 {
                     strIsDel = "0";
                 }
@@ -1118,11 +1029,11 @@ namespace IntelligentCooker
                     MessageBox.Show("是否已经删除只能填‘是’或者‘否’");
                     return;
                 }
-                if(strFireFlg=="是")
+                if (strFireFlg == "是")
                 {
                     strFireFlg = "1";
                 }
-                else if(strFireFlg=="否")
+                else if (strFireFlg == "否")
                 {
                     strFireFlg = "0";
                 }
@@ -1148,7 +1059,7 @@ namespace IntelligentCooker
                     Logger.LogMessage("管理员修改设备", "数据库1行受影响，修改成功");
                     string strSql1 = "update MyCookData Set SendFlg=0 where DeviceID=@deviceid";
                     SqlParameter para1 = new SqlParameter("@deviceid", strDeviceID);
-                    SqlHelper.MyHandleUpdateSql(strSql1,para1);
+                    SqlHelper.MyHandleUpdateSql(strSql1, para1);
                     UpdataDGV_Device();
                 }
             }
@@ -1282,7 +1193,7 @@ namespace IntelligentCooker
                     if (dgv_User.SelectedRows.Count > 0)
                     {
                         Logger.LogMessage("管理员给选中的用户发送信息", "管理员已经选中了多个用户");
-                        string strMsg = txtBox_SendMsg.Text.Trim(); 
+                        string strMsg = txtBox_SendMsg.Text.Trim();
                         foreach (DataGridViewRow dgvrow in dgv_User.SelectedRows)
                         {
                             string strUserID = dgvrow.Cells[0].Value.ToString().Trim();
@@ -1310,6 +1221,8 @@ namespace IntelligentCooker
                 Logger.LogException(ex);
             }
         }
+
+
 
 
     }
