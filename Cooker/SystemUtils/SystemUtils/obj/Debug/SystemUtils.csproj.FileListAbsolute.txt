@@ -1,0 +1,7 @@
+D:\Cooker\SystemUtils\SystemUtils\obj\Debug\ResolveAssemblyReference.cache
+D:\Cooker\SystemUtils\SystemUtils\obj\Debug\CementingSim.Net.SystemUtils.Properties.Resources.resources
+D:\Cooker\SystemUtils\SystemUtils\obj\Debug\SystemUtils.csproj.GenerateResource.Cache
+D:\Cooker\output\Cooker.SystemUtils.dll
+D:\Cooker\output\Cooker.SystemUtils.pdb
+D:\Cooker\SystemUtils\SystemUtils\obj\Debug\Cooker.SystemUtils.dll
+D:\Cooker\SystemUtils\SystemUtils\obj\Debug\Cooker.SystemUtils.pdb
